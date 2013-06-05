@@ -220,7 +220,36 @@ fn traverse_inline_body(cx: @mut ctx, body: &blk) {
     visit::visit_block(body, cx, visit::mk_vt(@visit::Visitor {
         visit_expr: traverse_expr,
         visit_item: traverse_item,
-         ..*visit::default_visitor()
+        ..*visit::default_visitor()
+    }));
+}
+
+fn traverse_const_expr(cx: @mut ctx, expr: @expr) {
+    debug!("traversing stuff");
+    fn traverse_expr<'a>(e: @expr, cx: @mut ctx<'a>,
+                         v: visit::vt<@mut ctx<'a>>) {
+        debug!("traversing stuff2");
+        match e.node {
+            expr_path(_) => {
+                debug!("traversing stuff3");
+                match cx.tcx.def_map.find(&e.id) {
+                    Some(&d) => {
+                        traverse_def_id(cx, def_id_of_def(d));
+                    }
+                    None => cx.tcx.sess.span_bug(
+                        e.span,
+                        fmt!("Unbound node id %? while traversing %s",
+                             e.id,
+                             expr_to_str(e, cx.tcx.sess.intr())))
+                }
+            }
+            _ => ()
+        }
+        visit::visit_expr(e, cx, v);
+    }
+    traverse_expr(expr, cx, visit::mk_vt(@visit::Visitor {
+        visit_expr: traverse_expr,
+        ..*visit::default_visitor()
     }));
 }
 
@@ -237,6 +266,9 @@ fn traverse_all_resources_and_impls(cx: @mut ctx, crate_mod: &_mod) {
                 match i.node {
                     item_impl(*) => {
                         traverse_public_item(cx, i);
+                    }
+                    item_const(_, expr) => {
+                        traverse_const_expr(cx, expr);
                     }
                     _ => ()
                 }
