@@ -129,7 +129,14 @@ memory_region::malloc(size_t size, const char *tag) {
     size_t old_size = size;
 #   endif
     size += HEADER_SIZE;
-    alloc_header *mem = (alloc_header *)::malloc(size);
+    alloc_header *mem;
+    if (size < 4096) {
+        mem = (alloc_header *)::malloc(size);
+    } else {
+        void *ptr;
+        posix_memalign(&ptr, 4096, size);
+        mem = (alloc_header*)ptr;
+    }
     if (mem == NULL) {
         fprintf(stderr,
                 "memory_region::malloc> "

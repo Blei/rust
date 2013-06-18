@@ -15,6 +15,9 @@
 #include "rust_exchange_alloc.h"
 #include "memory_region.h"
 
+#define RUST_STACK_MPROTECT
+#define RUST_STACK_PAGESIZE 4096
+
 struct rust_task;
 
 struct stk_seg {
@@ -25,6 +28,11 @@ struct stk_seg {
     uint8_t is_big;
 
     rust_task *task;
+#ifdef RUST_STACK_MPROTECT
+    // To force the canary to be at the end of a page, and the previous fields in a
+    // different page than the canary
+    uint8_t _page_padding[2*RUST_STACK_PAGESIZE - 5*8 - 8];
+#endif
     uintptr_t canary;
 
     uint8_t data[];

@@ -12,6 +12,7 @@
 #include "rust_stack.h"
 #include "vg/valgrind.h"
 #include "vg/memcheck.h"
+#include <sys/mman.h>
 
 #include <cstdio>
 
@@ -48,6 +49,17 @@ deregister_valgrind_stack(stk_seg *stk) {
 void
 add_stack_canary(stk_seg *stk) {
     stk->canary = canary_value;
+#ifdef RUST_STACK_MPROTECT
+    assert(((size_t) stk & (RUST_STACK_PAGESIZE - 1)) == 0);
+    assert(((size_t) (&stk->data) & (RUST_STACK_PAGESIZE - 1)) == 0);
+    assert(sizeof(stk_seg) == 2*RUST_STACK_PAGESIZE);
+    void *page_start = &stk->canary;
+    page_start = (void*) ((size_t) page_start & (size_t) ~(RUST_STACK_PAGESIZE - 1));
+    if (mprotect(page_start, RUST_STACK_PAGESIZE, PROT_READ)) {
+        perror("mproctect");
+        abort();
+    }
+#endif
 }
 
 void
@@ -71,6 +83,16 @@ create_stack(memory_region *region, size_t sz) {
 
 void
 destroy_stack(memory_region *region, stk_seg *stk) {
+#ifdef RUST_STACK_MPROTECT
+    assert(((size_t) stk & (RUST_STACK_PAGESIZE - 1)) == 0);
+    assert(((size_t) (&stk->data) & (RUST_STACK_PAGESIZE - 1)) == 0);
+    void *page_start = &stk->canary;
+    page_start = (void*) ((size_t) page_start & (size_t) ~(RUST_STACK_PAGESIZE - 1));
+    if (mprotect(page_start, RUST_STACK_PAGESIZE, PROT_READ|PROT_WRITE)) {
+        perror("mproctect");
+        abort();
+    }
+#endif
     deregister_valgrind_stack(stk);
     region->free(stk);
 }
@@ -89,6 +111,16 @@ create_exchange_stack(rust_exchange_alloc *exchange, size_t sz) {
 
 void
 destroy_exchange_stack(rust_exchange_alloc *exchange, stk_seg *stk) {
+#ifdef RUST_STACK_MPROTECT
+    assert(((size_t) stk & (RUST_STACK_PAGESIZE - 1)) == 0);
+    assert(((size_t) (&stk->data) & (RUST_STACK_PAGESIZE - 1)) == 0);
+    void *page_start = &stk->canary;
+    page_start = (void*) ((size_t) page_start & (size_t) ~(RUST_STACK_PAGESIZE - 1));
+    if (mprotect(page_start, RUST_STACK_PAGESIZE, PROT_READ|PROT_WRITE)) {
+        perror("mproctect");
+        abort();
+    }
+#endif
     deregister_valgrind_stack(stk);
     exchange->free(stk);
 }

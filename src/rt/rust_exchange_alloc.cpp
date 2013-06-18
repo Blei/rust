@@ -20,7 +20,12 @@ uintptr_t rust_exchange_count = 0;
 
 void *
 rust_exchange_alloc::malloc(size_t size) {
-  void *value = ::malloc(size);
+  void *value;
+  if (size < 4096) {
+      value = ::malloc(size);
+  } else {
+      posix_memalign(&value, 4096, size);
+  }
   assert(value);
 
   sync::increment(rust_exchange_count);
