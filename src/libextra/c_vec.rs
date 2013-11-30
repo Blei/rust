@@ -23,21 +23,9 @@
  * memory can be optionally managed by Rust, if an appropriate destructor
  * closure is provided.  Safety is ensured by bounds-checking accesses, which
  * are marshalled through get and set functions.
- *
- * There are three unsafe functions: the two introduction forms, and the
- * pointer elimination form.  The introduction forms are unsafe for the
- * obvious reason (they act on a pointer that cannot be checked inside the
- * method), but the elimination form is somewhat more subtle in its unsafety.
- * By using a pointer taken from a c_vec::t without keeping a reference to the
- * c_vec::t itself around, the CVec could be garbage collected, and the
- * memory within could be destroyed.  There are legitimate uses for the
- * pointer elimination form -- for instance, to pass memory back into C -- but
- * great care must be taken to ensure that a reference to the c_vec::t is
- * still held if needed.
  */
 
 use std::ptr;
-use std::util;
 
 /**
  * The type representing a foreign chunk of memory
@@ -45,7 +33,7 @@ use std::util;
 pub struct CVec<T> {
     priv base: *mut T,
     priv len: uint,
-    priv rsrc: @DtorRes,
+    priv rsrc: DtorRes,
 }
 
 struct DtorRes {
@@ -55,7 +43,7 @@ struct DtorRes {
 #[unsafe_destructor]
 impl Drop for DtorRes {
     fn drop(&mut self) {
-        let dtor = util::replace(&mut self.dtor, None);
+        let dtor = self.dtor.take();
         match dtor {
             None => (),
             Some(f) => f()
@@ -75,77 +63,72 @@ impl DtorRes {
  Section: Introduction forms
  */
 
-/**
- * Create a `CVec` from a foreign buffer with a given length.
- *
- * # Arguments
- *
- * * base - A foreign pointer to a buffer
- * * len - The number of elements in the buffer
- */
-pub unsafe fn CVec<T>(base: *mut T, len: uint) -> CVec<T> {
-    return CVec {
-        base: base,
-        len: len,
-        rsrc: @DtorRes::new(None)
-    };
+impl <T> CVec<T> {
+    /**
+     * Create a `CVec` from a foreign buffer with a given length.
+     *
+     * # Arguments
+     *
+     * * base - A foreign pointer to a buffer
+     * * len - The number of elements in the buffer
+     */
+    pub fn new(base: *mut T, len: uint) -> CVec<T> {
+        CVec {
+            base: base,
+            len: len,
+            rsrc: DtorRes::new(None)
+        }
+    }
+
+    /**
+     * Create a `CVec` from a foreign buffer, with a given length,
+     * and a function to run upon destruction.
+     *
+     * # Arguments
+     *
+     * * base - A foreign pointer to a buffer
+     * * len - The number of elements in the buffer
+     * * dtor - A function to run when the value is destructed, useful
+     *          for freeing the buffer, etc.
+     */
+    pub fn new_with_dtor(base: *mut T, len: uint, dtor: proc()) -> CVec<T> {
+        CVec {
+            base: base,
+            len: len,
+            rsrc: DtorRes::new(Some(dtor))
+        }
+    }
+
+    /**
+     * Sets the value of an element at a given index
+     *
+     * Fails if `ofs` is greater or equal to the length of the vector
+     */
+    pub unsafe fn set(&mut self, ofs: uint, v: T) {
+        assert!(ofs < self.len);
+        *ptr::mut_offset(self.base, ofs as int) = v;
+    }
+
+    /// Returns the length of the vector
+    pub fn len(&self) -> uint { self.len }
+
+    /// Calls a closure with a reference to the underlying pointer
+    pub fn with_ptr<U>(&self, f: |*mut T| -> U) -> U {
+        f(self.base)
+    }
 }
 
-/**
- * Create a `CVec` from a foreign buffer, with a given length,
- * and a function to run upon destruction.
- *
- * # Arguments
- *
- * * base - A foreign pointer to a buffer
- * * len - The number of elements in the buffer
- * * dtor - A function to run when the value is destructed, useful
- *          for freeing the buffer, etc.
- */
-pub unsafe fn c_vec_with_dtor<T>(base: *mut T, len: uint, dtor: proc())
-                                 -> CVec<T> {
-    return CVec{
-        base: base,
-        len: len,
-        rsrc: @DtorRes::new(Some(dtor))
-    };
+impl <T: Clone> CVec<T> {
+    /**
+     * Retrieves an element at a given index
+     *
+     * Fails if `ofs` is greater or equal to the length of the vector
+     */
+    pub unsafe fn get(&self, ofs: uint) -> T {
+        assert!(ofs < self.len);
+        (*ptr::mut_offset(self.base, ofs as int)).clone()
+    }
 }
-
-/*
- Section: Operations
- */
-
-/**
- * Retrieves an element at a given index
- *
- * Fails if `ofs` is greater or equal to the length of the vector
- */
-pub fn get<T:Clone>(t: CVec<T>, ofs: uint) -> T {
-    assert!(ofs < len(t));
-    return unsafe {
-        (*ptr::mut_offset(t.base, ofs as int)).clone()
-    };
-}
-
-/**
- * Sets the value of an element at a given index
- *
- * Fails if `ofs` is greater or equal to the length of the vector
- */
-pub fn set<T>(t: CVec<T>, ofs: uint, v: T) {
-    assert!(ofs < len(t));
-    unsafe { *ptr::mut_offset(t.base, ofs as int) = v };
-}
-
-/*
- Section: Elimination forms
- */
-
-/// Returns the length of the vector
-pub fn len<T>(t: CVec<T>) -> uint { t.len }
-
-/// Returns a pointer to the first element of the vector
-pub unsafe fn ptr<T>(t: CVec<T>) -> *mut T { t.base }
 
 #[cfg(test)]
 mod tests {
@@ -155,54 +138,58 @@ mod tests {
     use std::libc::*;
     use std::libc;
 
-    fn malloc(n: size_t) -> CVec<u8> {
+    fn malloc(n: uint) -> CVec<u8> {
         unsafe {
-            let mem = libc::malloc(n);
+            let mem = libc::malloc(n as size_t);
 
             assert!(mem as int != 0);
 
-            return c_vec_with_dtor(mem as *mut u8,
-                                   n as uint,
-                                   proc() unsafe { libc::free(mem); });
+            return CVec::new_with_dtor(mem as *mut u8, n,
+                proc() unsafe { libc::free(mem); });
         }
     }
 
     #[test]
     fn test_basic() {
-        let cv = malloc(16u as size_t);
+        let mut cv = malloc(16);
 
-        set(cv, 3u, 8u8);
-        set(cv, 4u, 9u8);
-        assert_eq!(get(cv, 3u), 8u8);
-        assert_eq!(get(cv, 4u), 9u8);
-        assert_eq!(len(cv), 16u);
+        unsafe {
+            cv.set(3, 8u8);
+            cv.set(4, 9u8);
+            assert_eq!(cv.get(3u), 8u8);
+            assert_eq!(cv.get(4u), 9u8);
+        }
+        assert_eq!(cv.len(), 16u);
     }
 
     #[test]
     #[should_fail]
     fn test_overrun_get() {
-        let cv = malloc(16u as size_t);
+        let cv = malloc(16);
 
-        get(cv, 17u);
+        unsafe { cv.get(17u) };
     }
 
     #[test]
     #[should_fail]
     fn test_overrun_set() {
-        let cv = malloc(16u as size_t);
+        let mut cv = malloc(16);
 
-        set(cv, 17u, 0u8);
+        unsafe { cv.set(17u, 0u8) };
     }
 
     #[test]
     fn test_and_I_mean_it() {
-        let cv = malloc(16u as size_t);
-        let p = unsafe { ptr(cv) };
+        let mut cv = malloc(16);
 
-        set(cv, 0u, 32u8);
-        set(cv, 1u, 33u8);
-        assert_eq!(unsafe { *p }, 32u8);
-        set(cv, 2u, 34u8); /* safety */
+        unsafe {
+            cv.set(0u, 32u8);
+            cv.set(1u, 33u8);
+            cv.with_ptr(|p| {
+                assert_eq!(*p, 32u8);
+            });
+            cv.set(2u, 34u8); /* safety */
+        }
     }
 
 }
