@@ -100,6 +100,16 @@ impl <T> CVec<T> {
     }
 
     /**
+     * Retrieves an element at a given index
+     *
+     * Fails if `ofs` is greater or equal to the length of the vector
+     */
+    pub unsafe fn get<'a>(&'a self, ofs: uint) -> &'a T {
+        assert!(ofs < self.len);
+        &*ptr::mut_offset(self.base, ofs as int)
+    }
+
+    /**
      * Sets the value of an element at a given index
      *
      * Fails if `ofs` is greater or equal to the length of the vector
@@ -115,18 +125,6 @@ impl <T> CVec<T> {
     /// Calls a closure with a reference to the underlying pointer
     pub fn with_ptr<U>(&self, f: |*mut T| -> U) -> U {
         f(self.base)
-    }
-}
-
-impl <T: Clone> CVec<T> {
-    /**
-     * Retrieves an element at a given index
-     *
-     * Fails if `ofs` is greater or equal to the length of the vector
-     */
-    pub unsafe fn get(&self, ofs: uint) -> T {
-        assert!(ofs < self.len);
-        (*ptr::mut_offset(self.base, ofs as int)).clone()
     }
 }
 
@@ -156,8 +154,8 @@ mod tests {
         unsafe {
             cv.set(3, 8u8);
             cv.set(4, 9u8);
-            assert_eq!(cv.get(3u), 8u8);
-            assert_eq!(cv.get(4u), 9u8);
+            assert_eq!(*cv.get(3u), 8u8);
+            assert_eq!(*cv.get(4u), 9u8);
         }
         assert_eq!(cv.len(), 16u);
     }
